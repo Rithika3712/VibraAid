@@ -1,152 +1,231 @@
 # VibraAid — System Architecture
 
-## 1. Purpose
+> VIBRA: Variable-Condition Intelligent Motor Diagnostics Using Edge AI
 
-VibraAid is a proposed condition-aware motor-monitoring system combining
-vibration, surface temperature, and available VFD operating-context data.
+| Field | Details |
+|---|---|
+| Project | VibraAid |
+| Application ID | VK26-IITI-AHM-0402 |
+| Theme | AI in Hardware & Manufacturing |
+| Sub-theme | Predictive Maintenance & Machine Diagnostics |
+| Document status | Proposed architecture; implementation and validation pending |
 
-The system aims to distinguish normal operating variations from abnormal
-motor behaviour using local feature processing and anomaly detection.
+---
 
-Development status: proposed architecture; integration and validation pending.
+## 1. Architecture Objective
 
-## 2. System Scope
+VibraAid is a proposed induction-motor monitoring system that combines
+vibration, surface-temperature measurements, and available operating
+context from a compatible variable-frequency drive (VFD).
 
-### Included in the Preliminary Design
+The objective is to evaluate motor behaviour relative to its operating
+condition rather than treating every signal change as a fault.
+
+The system is intended to provide advisory information for maintenance
+review. It does not control the motor or replace existing protection.
+
+## 2. Design Scope
+
+### Included in the Proposed First Prototype
 
 - Three-axis vibration acquisition
 - Motor-surface temperature monitoring
-- Operating-context acquisition from a compatible VFD
-- Local signal-quality checks and feature extraction
-- Condition-aware anomaly scoring
-- Advisory status and event logging
-- Dashboard visualization
+- Read-only acquisition of available VFD operating parameters
+- Local data-quality checks
+- Feature extraction and condition-aware anomaly scoring
+- Explicit fault, unavailable, and out-of-range states
+- Local-network dashboard and event logging
 
-### Not Included in the Initial Scope
+### Outside the Initial Scope
 
 - Automatic motor start, stop, or speed control
-- Safety-critical motor protection
-- High-rate motor-current or voltage-waveform acquisition
-- Guaranteed identification of specific fault types
-- Remaining useful life prediction
-- Validated deployment across different motor installations
+- Safety-critical protection
+- Direct acquisition of high-rate motor-current or voltage waveforms
+- Validated identification of specific fault types
+- Remaining useful life estimation
+- Automatic online retraining
+- Guaranteed performance on untested motors or operating conditions
 
-## 3. Architecture Overview
+## 3. Functional Architecture
 
 ```mermaid
 flowchart TB
     MOTOR["Induction Motor"]
 
-    MOTOR -. "Mechanical vibration" .-> VIB["ADXL345"]
-    MOTOR -. "Surface temperature" .-> TEMP["DS18B20"]
-
+    VIB["ADXL345 Vibration Sensor"]
+    TEMP["DS18B20 Surface-Temperature Probe"]
     VFD["Compatible VFD"]
     ISO["Isolated TTL-to-RS485 Converter"]
 
-    VIB -->|"SPI"| ACQ["ESP32-S3: Acquisition"]
+    subgraph EDGE["ESP32-S3 Edge Unit"]
+        ACQ["Sensor Acquisition and VFD Polling"]
+        QC["Data-Quality and Freshness Checks"]
+        FEAT["Feature Extraction"]
+        CONTEXT["Operating-Context Assessment"]
+        SCORE["Condition-Aware Anomaly Scoring"]
+        STATE["Advisory State Manager"]
+        BUFFER["Bounded Event Buffer"]
+        NET["Local-Network Interface"]
+    end
+
+    HOST["Local Computer: Dashboard and Persistent Logging"]
+
+    MOTOR -.->|"Mechanical vibration"| VIB
+    MOTOR -.->|"Surface temperature"| TEMP
+
+    VIB -->|"SPI"| ACQ
     TEMP -->|"1-Wire"| ACQ
-    VFD <-->|"RS485 / Modbus RTU"| ISO
-    ISO <-->|"UART"| ACQ
 
-    ACQ --> QC["Data-Quality and Telemetry-Age Checks"]
-    QC --> FEATURES["Feature Extraction"]
-    QC --> CONTEXT["Operating-Context Assessment"]
+    ACQ -->|"Read requests via UART"| ISO
+    ISO -->|"Read requests via RS485"| VFD
+    VFD -->|"Telemetry responses"| ISO
+    ISO -->|"UART responses"| ACQ
 
-    FEATURES --> SCORE["Condition-Aware Anomaly Scoring"]
+    ACQ --> QC
+    QC --> FEAT
+    QC --> CONTEXT
+
+    FEAT --> SCORE
     CONTEXT --> SCORE
 
-    SCORE --> STATE["Advisory State Manager"]
-    QC -->|"Invalid or unavailable inputs"| STATE
+    SCORE --> STATE
+    QC -->|"Invalid, stale or missing data"| STATE
 
-    STATE --> LOG["Local Status and Bounded Event Buffer"]
-    LOG -->|"Proposed local Wi-Fi link"| DASH["Dashboard and Persistent Host Log"]
-
-    PSU["Regulated Low-Voltage Supply"] --> ACQ
+    STATE --> BUFFER
+    STATE --> NET
+    BUFFER --> NET
+    NET -->|"Local Wi-Fi"| HOST
 ```
 
-The diagram shows functional data paths, not a verified circuit schematic.
-The isolated converter must preserve both signal and power isolation.
+This is a functional data-flow diagram, not a verified wiring schematic.
 
-## 4. Hardware Subsystems
+The firmware will issue only approved read requests to the VFD.
+No motor-control register writes are included in this architecture.
 
-| Subsystem | Proposed Hardware | Interface | Purpose |
-|---|---|---|---|
-| Edge processing | ESP32-S3-DevKitC-1 N8R8 | SPI, UART, GPIO, Wi-Fi | Acquisition and local analysis |
-| Vibration sensing | ADXL345 breakout | SPI | Three-axis acceleration |
-| Temperature sensing | DS18B20 probe | 1-Wire | Surface-temperature trend |
-| Drive telemetry | Compatible VFD | RS485 / Modbus RTU | Available operating-context data |
-| Isolation | Isolated TTL-to-RS485 converter | UART ↔ RS485 | Separate controller and field interface |
-| Power | Regulated low-voltage supply | Board-dependent distribution | Monitoring electronics |
-| User interface | Local computer running Streamlit | Local network | Visualization and event review |
+## 4. Proposed Hardware
 
-Exact component variants, logic levels, pin assignments, and power
-requirements must be checked against the purchased hardware.
+| Subsystem | Proposed Selection | Function |
+|---|---|---|
+| Edge controller | ESP32-S3-DevKitC-1 N8R8 | Acquisition, feature processing and inference |
+| Vibration sensor | ADXL345 breakout with accessible SPI pins | Three-axis acceleration |
+| Temperature sensor | DS18B20 probe | Motor-surface temperature |
+| Telemetry interface | Isolated TTL-to-RS485 converter | Controller-to-VFD communication |
+| Operating-context source | Compatible VFD with documented registers | Available drive-reported parameters |
+| Power | Regulated low-voltage supply | Monitoring electronics |
+| Monitoring host | Local computer running a Python dashboard | Visualization and persistent logging |
+| Mechanical assembly | Enclosure, standoffs and rigid sensor mount | Protection and repeatable placement |
 
-## 5. Measurement Boundaries
+Exact variants, availability, electrical compatibility, mounting
+arrangements, and power connections must be confirmed before assembly.
 
-### Vibration
+The motor, VFD, loading arrangement, guarding, and reference instruments
+are separate test infrastructure.
 
-The ADXL345 will measure acceleration at a fixed motor-mounting location.
-Mounting orientation, attachment method, range, and acquisition settings
-must be recorded with each dataset.
+## 5. Measurement Definitions
 
-### Temperature
+### 5.1 Vibration
 
-The DS18B20 will measure temperature at its mounting location on the
-motor surface. This is not a direct measurement of winding temperature.
+The ADXL345 will measure acceleration at a documented mounting location.
 
-### VFD Operating Context
+Each recording must identify:
 
-The system will read only parameters available in the actual VFD manual,
-such as output frequency, reported current, reported voltage, or drive status.
+- Sensor orientation
+- Attachment method
+- Configured measurement range
+- Output data rate
+- Mounting location
+- Any change in installation
 
-- Reported VFD frequency is not directly measured shaft RPM.
-- A load indicator is used only if its meaning and scaling are documented.
-- Slowly polled telemetry is not an electrical waveform.
-- The initial system will not claim motor-current signature analysis.
+The ADXL345 does not establish diagnostic coverage for every motor fault.
+Coverage must be demonstrated through evaluation.
 
-## 6. Proposed Acquisition Configuration
+### 5.2 Temperature
 
-These are design targets, not measured performance.
+The DS18B20 will measure temperature at its motor-surface attachment.
+
+This measurement is not equivalent to internal winding temperature.
+
+Probe contact, installation location, and thermal response must be
+considered when interpreting trends.
+
+### 5.3 VFD Operating Context
+
+Only parameters documented for the selected VFD will be used.
+
+Possible inputs include:
+
+- Output frequency
+- Drive-reported current
+- Drive-reported voltage
+- Operating status
+- A documented load-related indicator, if available
+
+Important limitations:
+
+- VFD frequency is not a direct shaft-RPM measurement.
+- A reported load indicator must not be treated as measured torque
+  unless its meaning is explicitly established.
+- Polled VFD telemetry is not high-rate electrical waveform acquisition.
+- Motor-current signature analysis is not claimed for this design.
+- Telemetry freshness and scaling must be validated.
+
+## 6. Proposed Acquisition Settings
+
+The following values are design targets, not measured results.
 
 | Parameter | Proposed Setting |
 |---|---|
 | Vibration output rate | 1,600 samples/s per axis |
 | SPI clock | 2 MHz |
 | Vibration window | 2,048 samples per axis |
-| Window duration | 1.28 seconds |
+| Nominal window duration | 1.28 seconds |
+| Initial window overlap | None |
 | Temperature update | Approximately once per second |
-| VFD polling | Approximately once per second, subject to drive constraints |
-| Window overlap | Initially none; evaluate later |
-| Processing target | ≤200 ms after a complete window is available |
+| VFD polling | Approximately once per second, subject to drive limitations |
+| Feature-processing and scoring target | ≤200 ms after a complete window is ready |
 
-Total advisory latency also includes window acquisition, scheduling,
-communication, and persistence checks.
+The vibration range will be selected during commissioning to avoid
+clipping while retaining useful sensitivity.
 
-## 7. Firmware Organization
+The acquisition implementation must verify actual sample continuity.
+Configured output rate alone does not prove reliable acquisition.
 
-### Acquisition Layer
+End-to-end alert latency includes:
+
+1. Data-window acquisition
+2. Scheduling and processing
+3. Required telemetry availability
+4. Persistence checks
+5. Dashboard communication, where applicable
+
+The processing target must not be presented as total alert latency.
+
+## 7. Firmware Architecture
+
+### 7.1 Acquisition Service
 
 Responsibilities:
 
 - Initialize sensors and communication interfaces.
-- Acquire vibration samples into bounded buffers.
-- Detect buffer overflow and missing samples.
+- Acquire vibration into bounded buffers.
+- Track sample counts and buffer overflow.
 - Read temperature without blocking vibration acquisition.
-- Poll the VFD using documented read operations.
-- Timestamp measurements and communication outcomes.
+- Poll approved VFD registers.
+- Timestamp received data and communication outcomes.
+- Report acquisition interruptions explicitly.
 
-### Quality-Control Layer
+### 7.2 Data-Quality Service
 
 Responsibilities:
 
-- Check sensor responses and invalid readings.
-- Detect clipping, missing data, and acquisition interruptions.
-- Evaluate telemetry age.
-- Flag unavailable required inputs.
-- Prevent invalid data from producing a normal-condition status.
+- Detect missing or invalid sensor responses.
+- Check vibration clipping and acquisition gaps.
+- Reject invalid temperature readings.
+- Track VFD telemetry age.
+- Validate register decoding, units, and scaling.
+- Prevent invalid data from producing a normal advisory state.
 
-### Feature Layer
+### 7.3 Feature-Extraction Service
 
 Candidate features:
 
@@ -154,109 +233,188 @@ Candidate features:
 - Crest factor
 - Kurtosis
 - Selected spectral-band energy
-- Temperature and temperature trend
+- Surface temperature
+- Temperature trend
 - Available VFD operating-context values
 
-Preprocessing, units, feature ordering, scaling, and numerical safeguards
-must be identical during offline evaluation and embedded inference.
+Feature selection is provisional.
 
-### Inference Layer
+Preprocessing must define:
+
+- Units and axis orientation
+- Offset removal, where applicable
+- Windowing for spectral processing
+- Feature ordering
+- Normalization parameters
+- Handling of zero or near-zero denominators
+- Treatment of missing inputs
+
+Offline and embedded preprocessing must use the same definitions.
+
+### 7.4 Operating-Context Service
 
 Responsibilities:
 
-- Load the selected model and preprocessing configuration.
-- Check whether the operating condition is within validated coverage.
-- Calculate an anomaly score.
-- Apply thresholds established using held-out validation recordings.
-- Record model and configuration versions.
+- Interpret supported VFD parameters.
+- Distinguish evaluated steady operation from transitions.
+- Check whether an operating condition is within validated coverage.
+- Identify missing or stale context.
 
-### State and Reporting Layer
+Operating transitions must not automatically be classified as faults.
+Their treatment will be established during validation.
+
+### 7.5 Anomaly-Scoring Service
 
 Responsibilities:
 
-- Apply persistence and recovery logic.
-- Maintain explicit advisory states.
-- Buffer events within available memory.
-- Publish status to the dashboard.
-- Report resets, data gaps, and communication loss.
+- Load the selected detector and configuration.
+- Evaluate valid feature windows.
+- Produce an anomaly score.
+- Apply a threshold selected using validation recordings.
+- Report model and configuration versions.
 
-## 8. Model Development and Deployment
+An anomaly score is not a calibrated probability of a named fault.
+
+### 7.6 Advisory State Service
+
+Responsibilities:
+
+- Combine data validity, operating coverage, and anomaly information.
+- Apply defined persistence and recovery rules.
+- Produce an explicit advisory state.
+- Record reasons for unavailable or abnormal states.
+- Avoid silently replacing missing inputs with assumed normal values.
+
+### 7.7 Communication Service
+
+Responsibilities:
+
+- Publish status over the proposed local-network link.
+- Transfer buffered events when connectivity permits.
+- Report connection state and dropped records.
+- Keep network delays from blocking acquisition.
+
+The dashboard protocol and message schema will be finalized during
+implementation.
+
+## 8. Model Development
+
+### 8.1 Baseline
+
+Develop a lightweight statistical detector as a reference.
+
+Its performance will be compared with the proposed condition-aware
+approach using the same held-out recordings and event definitions.
+
+### 8.2 Candidate Edge-AI Model
+
+Evaluate a small feature-based anomaly-detection model trained using
+healthy recordings across approved operating conditions.
+
+A conditional autoencoder is a candidate, not a finalized model.
+
+Selection will consider:
+
+- False-alert performance
+- Detection performance on approved abnormal conditions
+- Memory requirements
+- Processing time
+- Supported embedded operations
+- Robustness to operating-condition changes
+
+### 8.3 Offline-to-Embedded Workflow
 
 ```mermaid
 flowchart LR
-    DATA["Independent Motor Recording Runs"]
+    RUNS["Independent Recording Runs"]
     SPLIT["Split by Run"]
-    TRAIN["Training Data"]
-    VALID["Validation Data"]
-    TEST["Held-Out Test Data"]
-    MODEL["Model and Threshold Selection"]
-    EXPORT["Export Model + Preprocessing"]
-    EDGE["Embedded Deployment"]
-    CHECK["On-Device Evaluation"]
+    TRAIN["Training Set"]
+    VALID["Validation Set"]
+    TEST["Held-Out Test Set"]
+    SELECT["Select Features, Model and Threshold"]
+    EXPORT["Export Model and Preprocessing"]
+    DEPLOY["Deploy to ESP32-S3"]
+    EVAL["Embedded Evaluation"]
 
-    DATA --> SPLIT
+    RUNS --> SPLIT
     SPLIT --> TRAIN
     SPLIT --> VALID
     SPLIT --> TEST
 
-    TRAIN --> MODEL
-    VALID --> MODEL
-    MODEL --> EXPORT
-    EXPORT --> EDGE
-    EDGE --> CHECK
-    TEST --> CHECK
+    TRAIN --> SELECT
+    VALID --> SELECT
+    SELECT --> EXPORT
+    EXPORT --> DEPLOY
+    DEPLOY --> EVAL
+    TEST --> EVAL
 ```
 
-### Candidate Approach
+### 8.4 Data-Separation Rules
 
-Evaluate a lightweight statistical baseline and a small feature-based
-anomaly-detection model trained on healthy recordings.
+- Split by independent recording run before creating overlapping windows.
+- Keep windows from the same run in one partition.
+- Fit normalization using training data only.
+- Select thresholds using validation data.
+- Keep the final test set separate from model selection.
+- Document operating-condition coverage in each partition.
 
-A conditional autoencoder is one candidate, not a finalized or already
-validated implementation.
-
-### Deployment Rules
+### 8.5 Deployment Rules
 
 - Train models offline.
-- Keep test recordings separate from model and threshold selection.
-- Keep overlapping windows from the same run in one partition.
-- Benchmark memory use and processing latency on the actual controller.
-- Verify numerical agreement between offline and embedded processing.
-- Do not automatically retrain the baseline during evaluation.
-- Do not interpret anomaly scores as calibrated fault probabilities.
+- Verify preprocessing consistency.
+- Compare embedded outputs with offline outputs.
+- Benchmark actual memory use and execution time.
+- Freeze the evaluated model and baseline during testing.
+- Do not automatically learn suspected abnormalities as healthy behaviour.
 
-If the chosen model exceeds embedded resources, use a smaller model or
-the statistical baseline and document the change.
+If the model exceeds available resources, evaluate a smaller model or
+use the statistical baseline with clearly documented limitations.
 
 ## 9. Advisory States
 
-| State | Trigger | Intended Response |
+| State | Condition | System Behaviour |
 |---|---|---|
-| Initializing | Startup or restart checks incomplete | Show unavailable status |
-| Within Learned Range | Valid data within evaluated operating coverage | Display measurements and status |
-| Inspection Advised | Persistent anomaly under valid conditions | Record event and request technician review |
-| Sensor Fault | Required sensor data invalid or missing | Suspend affected diagnostic scoring |
-| Context Unavailable | Required VFD data stale or missing | Suspend context-dependent scoring |
-| Outside Validated Range | Operating condition outside evaluated coverage | Avoid a healthy-condition claim |
+| Initializing | Startup checks or required inputs incomplete | Show unavailable status |
+| Sensor Fault | Required sensor data missing or invalid | Suspend affected scoring |
+| Context Unavailable | Required VFD context missing or stale | Suspend context-dependent scoring |
+| Outside Validated Range | Valid inputs outside evaluated operating coverage | Avoid normal-condition claims |
+| Within Learned Range | Valid inputs within coverage and below advisory criteria | Display current measurements |
+| Inspection Advised | Persistent abnormality under valid conditions | Record event and request human review |
 
-“Within Learned Range” does not guarantee absence of faults.
+Data validity and operating coverage take precedence over normal or
+abnormal scoring.
 
-Any reduced-input operating mode requires separate validation. Missing
-VFD context must not silently trigger an unvalidated vibration-only mode.
+If several issues occur together, the event record should preserve all
+relevant reasons even if the dashboard shows one primary state.
 
-## 10. Dashboard and Logging
+“Within Learned Range” does not guarantee that the motor is fault-free.
 
-### Proposed Dashboard Content
+A reduced-input fallback detector must be separately validated before
+it is enabled. Missing VFD context must not silently activate an
+unvalidated vibration-only diagnosis.
 
-- Connection and sensor status
+## 10. Dashboard Architecture
+
+The proposed dashboard will display:
+
+- Device connection status
+- Sensor and communication health
 - Latest vibration features
 - Surface-temperature trend
 - Available VFD operating context
 - Anomaly score and advisory state
-- Data age and last successful update
-- Event history and model version
+- Measurement age
+- Event history
+- Model and configuration versions
 
-### Proposed Event Fields
+The dashboard is an advisory interface.
+
+Loss of dashboard connectivity must not stop local acquisition and
+scoring, but it may interrupt remote visibility and persistent host logging.
+
+## 11. Event Logging
+
+### 11.1 Proposed Event Fields
 
 ```text
 device_id
@@ -265,98 +423,200 @@ event_sequence
 timestamp_utc_if_synchronized
 uptime_ms
 sensor_status
+communication_status
 context_age_ms
 operating_context
 feature_values
 anomaly_score
 advisory_state
+reason_codes
 model_version
 configuration_version
 ```
 
-### Storage Strategy
+### 11.2 Storage Strategy
 
-- Use a bounded on-device buffer for recent events.
+- Keep a bounded recent-event buffer on the controller.
 - Persist received records on the dashboard computer.
-- Document buffer capacity, overflow behaviour, and data gaps.
-- Do not claim full raw-waveform storage on the controller.
-- Establish a separate recording route for experimental raw data.
-- Mark wall-clock timestamps as unavailable until time is synchronized.
+- Define buffer size and overflow behaviour during implementation.
+- Record dropped-event counts.
+- Use boot identifiers and event sequences to identify resets and gaps.
+- Do not claim loss-free logging across power interruptions.
 
-Loss of dashboard connectivity must not stop local acquisition and
-scoring, but it may interrupt remote visibility and persistent host logging.
+Wall-clock timestamps must be marked unavailable until time is
+synchronized. Uptime and sequence fields remain useful for ordering
+events within a boot session.
 
-## 11. Mechanical Integration
+### 11.3 Experimental Raw Data
+
+Raw vibration recordings require a separately defined recording route.
+
+The first prototype must not assume that all raw waveforms can be
+retained in controller memory.
+
+Recording procedures must preserve:
+
+- Original measurements
+- Acquisition settings
+- Mounting information
+- Motor and VFD identifiers
+- Operating-condition metadata
+- Known interruptions and data-quality flags
+
+## 12. Mechanical Integration
 
 The proposed assembly includes:
 
-- Rigid vibration-sensor mounting near a selected bearing housing
+- Rigid sensor mounting near a selected bearing housing
 - Repeatable sensor orientation
-- Consistent temperature-probe placement
-- Short, secured sensor wiring
-- Insulating supports for electronics
-- A serviceable enclosure positioned away from hot or moving parts
-- Cable strain relief and unobstructed motor cooling
+- Consistent temperature-probe attachment
+- Short and secured sensor wiring
+- Insulating controller supports
+- Serviceable enclosure
+- Cable strain relief
+- Clear access to cooling openings and maintenance points
 
-Original CAD and dimensioned drawings must establish final component fit.
+Final CAD must establish:
 
-AI-generated illustrations are conceptual aids, not CAD exports,
-fabrication evidence, or mechanical-validation results.
+- Component fit
+- Connector access
+- Mounting-hole positions
+- Bracket geometry
+- Cable clearances
+- Material choices
+- Assembly sequence
 
-## 12. Power, Isolation, and Safety
+Any stress calculations or FEA must state actual geometry, material,
+constraints, load cases, and results.
 
-- Use an appropriately rated regulated supply for monitoring electronics.
-- Verify board power-input connections and regulator capacity.
-- Keep motor power terminals separate from controller circuitry.
-- Preserve the isolated converter's documented isolation arrangement.
-- Do not bridge field-side and controller-side grounds across isolation.
+AI-generated illustrations are conceptual aids. They are not CAD
+exports, mechanical-analysis results, or fabrication evidence.
+
+## 13. Electrical and Power Architecture
+
+The proposed monitoring electronics use a regulated low-voltage supply.
+
+Before assembly, verify:
+
+- Development-board power-input requirements
+- Supply connector compatibility
+- Sensor breakout supply and logic levels
+- Isolated converter supply requirements
+- Total current demand and regulator capacity
+- Pull-ups, decoupling, and protection components
+- Safe startup and reset behaviour
+
+The final schematic must show:
+
+- Power distribution
+- Signal connections
+- Connector pin assignments
+- Required supporting components
+- Isolation boundary
+- Protection provisions
+
+No motor power terminal may be directly connected to controller circuitry.
+
+## 14. Isolation and Safety Boundary
+
+- Use a converter with documented isolation suitable for the reviewed setup.
+- Preserve the manufacturer's isolation arrangement.
+- Do not bridge controller-side and field-side grounds across the barrier.
+- Review the complete installation, not only the converter module.
+- Retain independent emergency stops, interlocks, and overload protection.
+- Do not implement motor-control commands in the monitoring firmware.
 - Install or adjust sensors only after approved equipment isolation.
-- Keep existing emergency stops, interlocks, and overload protection independent.
-- Conduct motor/VFD work only under qualified supervision.
+- Use qualified supervision for motor/VFD work.
+- Keep cables and brackets clear of rotating parts.
+- Do not create unsafe faults for data collection.
 
-VibraAid provides advisory monitoring. It is not a certified protection
-device and must not replace machine safety systems.
+VibraAid is an experimental monitoring project, not a certified
+motor-protection or machine-safety system.
 
-## 13. Validation Plan
+## 15. Failure Handling
+
+| Failure | Intended Response |
+|---|---|
+| Vibration acquisition gap | Flag affected window and prevent misleading scoring |
+| Invalid temperature input | Flag sensor fault; apply only a separately validated reduced-input mode |
+| VFD timeout | Mark operating context unavailable |
+| Condition outside coverage | Report outside validated range |
+| Dashboard disconnection | Continue local processing; buffer events within capacity |
+| Buffer overflow | Record dropped-data or dropped-event count |
+| Controller reset | Restart checks; create a new boot identifier |
+| Processing overload | Report missed deadlines; reduce workload only through documented configuration |
+
+Fallback behaviour must be explicit, inspectable, and validated.
+
+## 16. Validation Plan
 
 | Area | Planned Evaluation |
 |---|---|
-| Acquisition | Sampling continuity, buffer overflow and timing |
-| Sensors | Invalid readings, disconnection and mounting repeatability |
-| Telemetry | Register scaling, timeouts and stale-data detection |
-| Condition awareness | Healthy speed/load variation versus fixed thresholds |
-| Detection | Event-level recall, precision and false alerts per hour |
-| Embedded inference | Memory, processing time and numerical consistency |
-| Integration | Restart behaviour, network loss and logging continuity |
+| Acquisition | Actual sample continuity, timing and buffer overflow |
+| Sensor installation | Mounting repeatability and clipping |
+| Temperature | Valid readings, contact consistency and trend behaviour |
+| VFD interface | Register meaning, scaling, serial settings and timeouts |
+| Condition awareness | Healthy variation across approved operating conditions |
+| Detection | Event-level precision, recall and false alerts per hour |
+| Embedded processing | Memory use, processing latency and numerical consistency |
+| Integration | Network loss, resets, stale data and event continuity |
+| Mechanical assembly | Fit, retention, cable routing and temperature exposure |
 
-Test conditions, repetitions, acceptance criteria, and limitations must
-be documented before reporting results.
+Before testing, define:
 
-## 14. Open Design Decisions
+- Safe test procedures
+- Recording durations and repetitions
+- Operating-condition coverage
+- Event definitions
+- Acceptance criteria
+- Reference measurements
+- Known limitations
 
-- Exact motor rating and laboratory loading arrangement
-- VFD model, register map, scaling, and serial settings
+Results must distinguish design targets from measured performance.
+
+## 17. Open Design Decisions
+
+The following remain subject to confirmation:
+
+- Motor rating and approved loading arrangement
+- VFD model and communication register map
 - Exact isolated-interface variant
-- Final schematic, protection components, and power budget
-- Sensor mounting geometry and cable routing
-- Final features, model, and thresholds
-- Event-buffer capacity and network message format
+- Final schematic and protection components
+- Power budget and connector arrangement
+- Sensor mount and cable routing
+- Final feature set and model
+- Anomaly threshold and persistence rules
+- Event-buffer capacity
+- Dashboard communication protocol
 - Approved abnormal-condition test procedures
 
-## 15. Current Limitations
+## 18. Implementation Evidence
 
-- No measured diagnostic accuracy is documented here.
+Completed work should be supported by:
+
+- Native CAD files and dimensioned drawings
+- Native schematic files
+- BOM with exact variants and dated quotations
+- Firmware source code
+- Feature-processing and model-development code
+- Genuine progress photographs and screenshots
+- Raw recordings and acquisition metadata
+- Test procedures and measured results
+
+Repository commits document repository changes. They must not be
+presented as proof of earlier fabrication or testing that did not occur.
+
+## 19. Current Limitations
+
+- Prototype integration and performance validation are pending.
+- No diagnostic accuracy is established.
 - No named-fault detection capability is established.
+- No guaranteed prevention of motor failure is claimed.
+- No maintenance-cost or downtime reduction is established.
 - No safety certification or ingress rating is claimed.
-- Generalization to new motors, mounts, or operating ranges requires testing.
-- Downtime reduction and maintenance savings remain unvalidated objectives.
+- New motors, mounting arrangements, and operating ranges require evaluation.
 
-## 16. Related Project Documents
+## 20. Technical References
 
-- README.md — project overview
-- Original VIBRA proposal — problem and intended outcomes
-- CAD files — mechanical design
-- Schematic files — electrical connections and isolation
-- BOM — exact variants, quantities and dated sourcing
-- Test plan — procedures, metrics and acceptance criteria
-- Evaluation report — measured results when available
+- [ESP32-S3-DevKitC-1 Documentation](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/index.html)
+- [ADXL345 Datasheet](https://www.analog.com/media/en/technical-documen
